@@ -25,6 +25,9 @@ jobs:
           rust-version: nightly
           targets: wasm32-unknown-unknown
 
+      - name: Ensure WASM target exists
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Build
         run: |
           cargo b --release --locked
