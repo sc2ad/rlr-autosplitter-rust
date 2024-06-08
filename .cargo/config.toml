@@ -1,0 +1,18 @@
+[build]
+target = "wasm32-unknown-unknown"
+rustflags = [
+    # The auto splitting runtime supports all the following WASM features.
+    "-C", "target-feature=+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,+simd128,+relaxed-simd,+multivalue",
+    # The following flags are specifically to optimize further on nightly.
+    "-Z", "virtual-function-elimination",
+    "-C", "lto",
+]
+
+[alias]
+# Alias for building on nightly, as multivalue requires std to be built manually.
+# Command: cargo b
+b = [
+    "build",
+    "-Z", "build-std=std,panic_abort",
+    "-Z", "build-std-features=panic_immediate_abort",
+]
