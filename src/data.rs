@@ -1,4 +1,4 @@
-use asr::{future::retry, watcher::Watcher, Address, Process};
+use asr::{future::next_tick, watcher::Watcher, Address, Process};
 
 use crate::{
     log,
@@ -17,12 +17,22 @@ pub struct GameData<'a> {
     valid: bool,
     difficulty: Option<Difficulty>,
 }
+
+async fn find_and_ret_pattern(process: &Process) -> Address {
+    loop {
+        match find_exp_pattern(process).await {
+            Some(dat) => return dat,
+            None => next_tick().await,
+        };
+    }
+}
+
 impl<'a> GameData<'a> {
     pub async fn new(process: &'a Process) -> GameData<'a> {
         // Try to find the address in the process
         Self {
             process,
-            exp_pointer: Some(retry(|| find_exp_pattern(process)).await),
+            exp_pointer: Some(find_and_ret_pattern(process).await),
             exp_watcher: Watcher::new(),
             level: SplitType::Level1,
             current_pad: 0,
@@ -34,8 +44,8 @@ impl<'a> GameData<'a> {
 impl GameData<'_> {
     /// Rescans the process for the exp pattern, returns true if still present, false otherwise
     /// This will allow you to rescan for the address after we have either lost it, or in order to reset.
-    pub fn rescan(&mut self) -> bool {
-        match find_exp_pattern(self.process) {
+    pub async fn rescan(&mut self) -> bool {
+        match find_exp_pattern(self.process).await {
             Some(val) => {
                 self.exp_pointer = Some(val);
                 true
@@ -105,6 +115,8 @@ impl GameData<'_> {
                                 .per_pad_exp(diff)
                                 .expect("Level is a normal level, so must have valid pad exp")
                         {
+                            let pad = self.current_pad;
+                            log!("Crossed pad! Was: {pad}!");
                             self.current_pad += 1;
                         }
                     }
@@ -115,12 +127,15 @@ impl GameData<'_> {
                     // TODO: Some compile time check to ensure we capture all difficulties as we iterate
                     if self.level.is_normal_level() {
                         if difference == self.level.standard_exp(Difficulty::Normal) {
+                            log!("Determined difficulty to be Normal!");
                             self.difficulty = Some(Difficulty::Normal);
                             self.current_pad = 1;
                         } else if difference == self.level.standard_exp(Difficulty::Hard) {
+                            log!("Determined difficulty to be Hard!");
                             self.difficulty = Some(Difficulty::Hard);
                             self.current_pad = 1;
                         } else if difference == self.level.standard_exp(Difficulty::Insane) {
+                            log!("Determined difficulty to be Insane!");
                             self.difficulty = Some(Difficulty::Insane);
                             self.current_pad = 1;
                         }
@@ -135,14 +150,20 @@ impl GameData<'_> {
     pub fn update(&mut self) {
         // Check to see if we need to complete a level based off of pad or exp
         if self.current_pad == PAD_COUNT {
+            let old_level = self.level;
             self.level = self.level.next();
+            let level = self.level;
+            log!("Level complete! Was: {old_level:?} now is: {level:?}");
             self.current_pad = 0;
         } else if self.level.is_boss_level() {
             // Check the difference here and increment the level if so
             if let Some(exps) = self.exp_watcher.pair {
                 if let Some(diff) = self.difficulty {
                     if exps.current - exps.old == self.level.boss_exp(diff) {
+                        let old_level = self.level;
                         self.level = self.level.next();
+                        let level = self.level;
+                        log!("Boss complete! Was: {old_level:?} now is: {level:?}");
                     }
                 }
             }

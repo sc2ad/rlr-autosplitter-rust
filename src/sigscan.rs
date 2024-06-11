@@ -19,7 +19,7 @@
 
 use core::mem;
 
-use asr::{Address, MemoryRangeFlags, Process};
+use asr::{future::next_tick, Address, MemoryRangeFlags, Process};
 
 use crate::log;
 
@@ -50,7 +50,7 @@ static EXP_PATTERN_SIGNATURE: u128 = 0x00000000000110CA00011BDF0000004A;
 // });
 // static EXP_PATTERN: u64x64 = simd::Simd::from_array(EXP_PATTERN_BYTES);
 
-pub fn find_exp_pattern(process: &Process) -> Option<Address> {
+pub async fn find_exp_pattern(process: &Process) -> Option<Address> {
     let mut addr = Address::new(0x20000000000);
     //                               0x260C8C5D77C
     let overall_end = addr.value() + 0x02000000000;
@@ -113,6 +113,7 @@ pub fn find_exp_pattern(process: &Process) -> Option<Address> {
         }
         // Skip pages we can't read the range for
         // TODO: Yield here
+        next_tick().await;
     }
     None
 }
