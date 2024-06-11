@@ -39,7 +39,8 @@ extern "C" {
 // static EXP_PATTERN_FIRST: u64x64 = simd::Simd::from_array([EXP_PATTERN_FIRST_SCALAR; 64]);
 // static EXP_PATTERN_SECOND_SCALAR: u64 = 0x0110CA;
 // static EXP_PATTERN_SECOND: u64x64 = simd::Simd::from_array([EXP_PATTERN_SECOND_SCALAR; 64]);
-static EXP_PATTERN_SIGNATURE: u128 = 0x00000000000110CA00011BDF0000004A;
+const EXP_PATTERN_SIGNATURE: u128 = 0x00000000000110CA00011BDF0000004A;
+const YIELD_FREQ: i32 = 100;
 // static EXP_PATTERN_BYTES: [u64; 64] = seq_macro::seq!(N in 0..32 {
 //     [
 //         #(
@@ -56,6 +57,7 @@ pub async fn find_exp_pattern(process: &Process) -> Option<Address> {
     let overall_end = addr.value() + 0x02000000000;
     // Array size is 4KB
     let mut buf = [0u8; (4 << 10)];
+    let mut i = 0;
     for range in process.memory_ranges() {
         // First, get the start and size of the page to see if we should look at it
         if let Ok((chunk_base, chunk_size)) = range.range() {
@@ -111,9 +113,12 @@ pub async fn find_exp_pattern(process: &Process) -> Option<Address> {
                 // TODO: Yield here
             }
         }
+        i += 1;
         // Skip pages we can't read the range for
-        // TODO: Yield here
-        next_tick().await;
+        // TODO: Yield here every 100 pages
+        if i % YIELD_FREQ == 0 {
+            next_tick().await;
+        }
     }
     None
 }
