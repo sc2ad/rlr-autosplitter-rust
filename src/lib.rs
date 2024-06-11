@@ -9,6 +9,7 @@ mod data;
 mod sigscan;
 mod split_type;
 
+use asr::time::Duration;
 use asr::Process;
 use asr::{future::next_tick, settings::Gui, timer};
 use data::GameData;
@@ -74,7 +75,15 @@ struct Settings {
 async fn main() {
     let mut settings = Settings::register();
 
-    dbg!("Loaded settings: {settings:?}");
+    log!("Loaded settings: {settings:?}");
+
+    let mut splits = [
+        SplitType::ExpGained,
+        SplitType::ExpGained,
+        SplitType::ExpGained,
+        SplitType::Level1,
+    ]
+    .iter();
 
     loop {
         let process = Process::wait_attach("SC2_x64.exe").await;
@@ -85,6 +94,8 @@ async fn main() {
                     // This outer loop happens whenever we decide to reset the timer
                     if settings.set_game_time {
                         timer::pause_game_time();
+                        timer::set_game_time(Duration::ZERO);
+                        // TODO: Figure out how to set game_time within the critical loop to something from the game
                     }
                     // Try to make a gamedata instance
                     let mut data = GameData::new(&process).await;
@@ -100,6 +111,7 @@ async fn main() {
                         log!("STARTING THE TIMER!");
                         timer::start();
                     }
+                    let mut split = splits.next();
                     loop {
                         settings.update();
                         // General loop consists of performing an exp update
@@ -118,10 +130,12 @@ async fn main() {
                         }
                         // Then check our upcoming split to see if we should split
                         // TODO: Keep the split info in a settings file somehow
-                        let split = SplitType::ExpGained;
-                        if data.should_split(split) {
-                            log!("SPLITTING FOR: {split:?}");
-                            timer::split();
+                        if let Some(spl) = split {
+                            if data.should_split(*spl) {
+                                log!("SPLITTING FOR: {spl:?}");
+                                timer::split();
+                                split = splits.next();
+                            }
                         }
 
                         // TODO: At some cadence, decide to rescan and determine if we should reset (or invalidate)
