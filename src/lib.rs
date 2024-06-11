@@ -16,6 +16,47 @@ use asr::{
 asr::async_main!(nightly);
 asr::panic_handler!();
 
+#[cfg(debug_assertions)]
+#[macro_export]
+macro_rules! log {
+    ($($arg:tt)*) => {{
+        let mut buf = ::asr::arrayvec::ArrayString::<1024>::new();
+        let _ = ::core::fmt::Write::write_fmt(
+            &mut buf,
+            ::core::format_args!($($arg)*),
+        );
+        ::asr::print_message(&buf);
+    }};
+}
+
+#[cfg(not(debug_assertions))]
+#[macro_export]
+macro_rules! log {
+    ($($arg:tt)*) => {};
+}
+
+#[macro_export]
+macro_rules! dbg {
+    // Copy of ::std::dbg! but for no_std with redirection to log!
+    () => {
+        $crate::log!("[{}:{}]", ::core::file!(), ::core::line!())
+    };
+    ($val:expr $(,)?) => {
+        // Use of `match` here is intentional because it affects the lifetimes
+        // of temporaries - https://stackoverflow.com/a/48732525/1063961
+        match $val {
+            tmp => {
+                $crate::log!("[{}:{}] {} = {:#?}",
+                    ::core::file!(), ::core::line!(), ::core::stringify!($val), &tmp);
+                tmp
+            }
+        }
+    };
+    ($($val:expr),+ $(,)?) => {
+        ($($crate::dbg!($val)),+,)
+    };
+}
+
 #[derive(Gui, Debug)]
 struct Settings {
     /// Automattcally reset the timer when RLR4 has ended
@@ -47,19 +88,32 @@ struct Settings {
 
 // 651468800
 // 455028736
+
+extern "C" {
+    pub fn process_read(
+        process: Process,
+        address: Address,
+        buf_ptr: *mut u8,
+        buf_len: usize,
+    ) -> bool;
+}
+// Endianness is broken for this value. When we compare, we want to compare against the flipped endian value
+// The actual pattern is: 0x4A000000DF1B0100CA10010000000000
+// but we must write the flipped variant: 0x00000000000110CA00011BDF0000004A
+static EXP_PATTERN_SIGNATURE: u128 = 0x00000000000110CA00011BDF0000004A;
 fn find_exp_pattern(process: &Process) -> Option<Address> {
-    let mut addr = Address::new(0x26004000000);
+    let mut addr = Address::new(0x20000000000);
     //                               0x260C8C5D77C
-    let overall_end = addr.value() + 0x00102000000;
-    // Endianness is broken for this value. When we compare, we want to compare against the flipped endian value
-    // The actual pattern is: 0x4A000000DF1B0100CA10010000000000
-    // but we must write the flipped variant: 0x00000000000110CA00011BDF0000004A
-    let signature: u128 = 0x4A000000DF1B0100CA10010000000000.from_be();
+    let overall_end = addr.value() + 0x02000000000;
     // Array size is 4KB
-    let mut buf = [MaybeUninit::uninit(); (4 << 10)];
+    let mut buf = [0u8; (4 << 10)];
     for range in process.memory_ranges() {
         // First, get the start and size of the page to see if we should look at it
         if let Ok((chunk_base, chunk_size)) = range.range() {
+            // Check that chunk_size is a multiple of 4096
+            if (chunk_size % 4096) != 0 {
+                continue;
+            }
             // Check the address range against our addr and overall_end
             if chunk_base + chunk_size <= addr || chunk_base.value() > overall_end {
                 // This page is out of bounds, ignore it
@@ -86,18 +140,22 @@ fn find_exp_pattern(process: &Process) -> Option<Address> {
                 // page, which is safe to read either fully or not at all. We do
                 // this to do a single read rather than many small ones as the
                 // syscall overhead is a quite high.
-                let end = (addr.value() & !((4 << 10) - 1)) + (4 << 10).min(chunk_end);
-                let len = end - addr.value();
-                let current_read_buf = &mut buf[..len as usize];
-                if let Ok(current_read_buf) = process.read_into_uninit_buf(addr, current_read_buf) {
-                    // Compare the array data that we just read here.
-                    // We want to compare in a fast way, where we convert all 4 byte increments to u128s and then compare equivalence
-                    if let Some(offset) = compare_equivalence(signature, current_read_buf) {
+
+                // TODO: We know that our end scan addr will always be 4KiB page aligned
+                if unsafe {
+                    process_read(
+                        mem::transmute_copy(process),
+                        addr,
+                        buf.as_mut_ptr().cast(),
+                        buf.len(),
+                    )
+                } {
+                    if let Some(offset) = compare_equivalence(&buf) {
                         return Some(addr.add(offset as u64));
                     }
-                };
+                }
                 // Move the address forward, eventually we will be at chunk_end, which will be the next chunk for us to read
-                addr = Address::new(end);
+                addr = addr.add(4096);
                 // TODO: Yield here
             }
         }
@@ -107,18 +165,49 @@ fn find_exp_pattern(process: &Process) -> Option<Address> {
     None
 }
 
-fn compare_equivalence(signature: u128, haystack: &[u8]) -> Option<usize> {
+fn compare_equivalence(haystack: &[u8; 4096]) -> Option<usize> {
+    let mut result = false;
+    // let u64s: &[u64] = unsafe { core::slice::from_raw_parts(haystack.as_ptr().cast(), 4096 / 8) };
+
+    // let a0: u64x64 = simd::Simd::from_slice(&u64s[..64]);
+    // let a1: u64x64 = simd::Simd::from_slice(&u64s[64..128]);
+    // let a2: u64x64 = simd::Simd::from_slice(&u64s[128..192]);
+    // let a3: u64x64 = simd::Simd::from_slice(&u64s[192..256]);
+    // let a4: u64x64 = simd::Simd::from_slice(&u64s[256..320]);
+    // let a5: u64x64 = simd::Simd::from_slice(&u64s[320..384]);
+    // let a6: u64x64 = simd::Simd::from_slice(&u64s[384..448]);
+    // let a7: u64x64 = simd::Simd::from_slice(&u64s[448..512]);
+
+    // result |= (a0 & EXP_PATTERN_FIRST).reduce_max() == EXP_PATTERN_FIRST_SCALAR;
+    // result |= (a0.)
+
+    let ptr = haystack.as_ptr() as *const u128;
+    // let data0: &[u128] = unsafe { std::slice::from_raw_parts(ptr, len / 16)};
+    // let data0: *const u128 = unsafe { &haystack.data.as_ptr().cast() };
+
+    // let data: [u128] = bytemuck::cast_slice(haystack);
+    for i in (0..4096 - 16).step_by(16) {
+        // Unrolled 4 times
+        result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i).read() };
+        result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i + 4).read_unaligned() };
+        result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i + 8).read_unaligned() };
+        result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i + 12).read_unaligned() };
+    }
+    // Final chunk is just a single check
+    result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(4096 - 16).read() };
+    if result {
+        // Do the slow parse to find the index here since we had a PERFECT match
     let mut offset = 0;
-    // haystack must be aligned 4 at least, we won't have it at the edge of a 4KB page
-    while offset < haystack.len() - 15 {
+        while offset <= 4096 - 16 {
         let ptr: *const u128 =
             unsafe { haystack.as_ptr().byte_offset(offset.try_into().unwrap()) }.cast();
         let val = unsafe { ptr.read_unaligned() };
-        if signature == val {
+            if EXP_PATTERN_SIGNATURE == val {
             // Exact equivalence
             return Some(offset);
         }
         offset += 4;
+        }
     }
     None
 }
@@ -126,7 +215,7 @@ fn compare_equivalence(signature: u128, haystack: &[u8]) -> Option<usize> {
 async fn main() {
     let mut settings = Settings::register();
 
-    asr::print_limited::<256>(&format_args!("Loaded settings: {settings:?}"));
+    dbg!("Loaded settings: {settings:?}");
 
     let mut exp_addr = None;
 
@@ -134,21 +223,17 @@ async fn main() {
         let process = Process::wait_attach("SC2_x64.exe").await;
         process
             .until_closes(async {
-                asr::print_message("Attached to process!");
+                log!("Attached to process!");
                 if settings.set_game_time {
                     timer::pause_game_time();
                 }
-                // TODO: It REALLY shouldn't be this big but alas that's how it is.
-                // let search_range = (Address::new(0x20000000000), 0xf000000000);
                 loop {
                     settings.update();
                     // EXP address is actually 4 bytes prior
                     if exp_addr.is_none() {
                         exp_addr = Some(retry(|| find_exp_pattern(&process)).await.add_signed(-4));
-                        let exp_value = process.read::<i32>(exp_addr.unwrap());
-                        asr::print_limited::<256>(&format_args!(
-                            "FOUND SIGNATURE: {exp_addr:?} with exp value: {exp_value:?}"
-                        ));
+                        let exp_value = process.read::<i32>(exp_addr.unwrap()).unwrap() / 4096;
+                        log!("FOUND SIGNATURE: {exp_addr:?} with exp value: {exp_value:?}");
                     }
 
                     // We have found the exp signature, start the timer if requested
