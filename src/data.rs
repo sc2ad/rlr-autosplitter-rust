@@ -116,8 +116,9 @@ impl GameData<'_> {
                                 .expect("Level is a normal level, so must have valid pad exp")
                         {
                             let pad = self.current_pad;
-                            log!("Crossed pad! Was: {pad}!");
-                            self.current_pad += 1;
+                            let new_pad = self.current_pad + 1;
+                            log!("Crossed pad! Previous pad was: {pad}, pad just crossed is: {new_pad}!");
+                            self.current_pad = new_pad;
                         }
                     }
                 }
@@ -207,9 +208,7 @@ impl GameData<'_> {
                 match split {
                     SplitType::Manual => false,
                     SplitType::ExpGained => exp_difference > 0,
-                    _ => panic!(
-                        "Split type: {split:?} requires a difficulty, but none was deduced or provided!"
-                    ),
+                    _ => false,
                 }
             }
         } else {
