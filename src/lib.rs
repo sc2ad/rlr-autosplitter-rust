@@ -19,7 +19,7 @@ use split_type::SplitType;
 asr::async_main!(nightly);
 asr::panic_handler!();
 
-#[cfg(debug_assertions)]
+// #[cfg(debug_assertions)]
 #[macro_export]
 macro_rules! log {
     ($($arg:tt)*) => {{
@@ -32,11 +32,11 @@ macro_rules! log {
     }};
 }
 
-#[cfg(not(debug_assertions))]
-#[macro_export]
-macro_rules! log {
-    ($($arg:tt)*) => {};
-}
+// #[cfg(not(debug_assertions))]
+// #[macro_export]
+// macro_rules! log {
+//     ($($arg:tt)*) => {};
+// }
 
 #[macro_export]
 macro_rules! dbg {
