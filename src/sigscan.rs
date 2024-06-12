@@ -17,7 +17,7 @@
 // 651468800
 // 455028736
 
-use core::mem;
+use core::mem::{self, MaybeUninit};
 
 use asr::{future::next_tick, Address, MemoryRangeFlags, Process};
 
@@ -40,7 +40,7 @@ extern "C" {
 // static EXP_PATTERN_SECOND_SCALAR: u64 = 0x0110CA;
 // static EXP_PATTERN_SECOND: u64x64 = simd::Simd::from_array([EXP_PATTERN_SECOND_SCALAR; 64]);
 const EXP_PATTERN_SIGNATURE: u128 = 0x00000000000110CA00011BDF0000004A;
-const YIELD_FREQ: i32 = 100;
+const YIELD_FREQ: i32 = 1000;
 // static EXP_PATTERN_BYTES: [u64; 64] = seq_macro::seq!(N in 0..32 {
 //     [
 //         #(
@@ -52,17 +52,25 @@ const YIELD_FREQ: i32 = 100;
 // static EXP_PATTERN: u64x64 = simd::Simd::from_array(EXP_PATTERN_BYTES);
 
 pub async fn find_exp_pattern(process: &Process) -> Option<Address> {
-    let mut addr = Address::new(0x20000000000);
+    let mut addr = Address::new(0x00010000000);
     //                               0x260C8C5D77C
-    let overall_end = addr.value() + 0x02000000000;
-    // Array size is 4KB
-    let mut buf = [0u8; (4 << 10)];
+    let overall_end = addr.value() + 0x80000000000;
+    // Array size is 64KB
+    let mut buf = [MaybeUninit::uninit(); (64 << 10)];
     let mut i = 0;
+    let mut read_count = 0;
     for range in process.memory_ranges() {
         // First, get the start and size of the page to see if we should look at it
         if let Ok((chunk_base, chunk_size)) = range.range() {
-            // Check that chunk_size is a multiple of 4096
-            if (chunk_size % 4096) != 0 {
+            i += 1;
+            // Skip all pages where i is less than some fixed value
+            // In this case, we just willy-nilly assume that our address is in the latter half of pages
+            // So, skip the first 3000
+            if i <= 1000 {
+                continue;
+            }
+            // Check that chunk_size is a multiple of buf.size()
+            if (chunk_size as usize % buf.len()) != 0 {
                 continue;
             }
             // Check the address range against our addr and overall_end
@@ -101,7 +109,8 @@ pub async fn find_exp_pattern(process: &Process) -> Option<Address> {
                         buf.len(),
                     )
                 } {
-                    if let Some(offset) = compare_equivalence(&buf) {
+                    let read_data = unsafe { MaybeUninit::array_assume_init(buf) };
+                    if let Some(offset) = compare_equivalence(&read_data) {
                         // Exp offset is -4 off the pattern
                         let result = addr.add(offset as u64).add_signed(-4);
                         log!("Found exp at: {result:?}");
@@ -109,21 +118,25 @@ pub async fn find_exp_pattern(process: &Process) -> Option<Address> {
                     }
                 }
                 // Move the address forward, eventually we will be at chunk_end, which will be the next chunk for us to read
-                addr = addr.add(4096);
+                addr = addr.add(buf.len() as u64);
                 // TODO: Yield here
             }
-        }
-        i += 1;
-        // Skip pages we can't read the range for
-        // TODO: Yield here every 100 pages
-        if i % YIELD_FREQ == 0 {
-            next_tick().await;
+            // Yield back after READING pages, since that's the actually slow part
+            read_count += 1;
+            if read_count % YIELD_FREQ == 0 {
+                // let page = i - 1;
+                // log!("Yielding at: {page} page, with a read count of: {read_count}");
+                next_tick().await;
+            }
         }
     }
+    log!(
+        "Could not find pattern even after searching the whole address range! Is the game running?"
+    );
     None
 }
 
-fn compare_equivalence(haystack: &[u8; 4096]) -> Option<usize> {
+fn compare_equivalence<const SIZE: usize>(haystack: &[u8; SIZE]) -> Option<usize> {
     let mut result = false;
     // let u64s: &[u64] = unsafe { core::slice::from_raw_parts(haystack.as_ptr().cast(), 4096 / 8) };
 
@@ -144,19 +157,22 @@ fn compare_equivalence(haystack: &[u8; 4096]) -> Option<usize> {
     // let data0: *const u128 = unsafe { &haystack.data.as_ptr().cast() };
 
     // let data: [u128] = bytemuck::cast_slice(haystack);
-    for i in (0..4096 - 16).step_by(16) {
+    for i in (0..SIZE - 16).step_by(16) {
         // Unrolled 4 times
-        result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i).read() };
-        result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i + 4).read_unaligned() };
-        result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i + 8).read_unaligned() };
-        result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i + 12).read_unaligned() };
+        result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i as isize).read() };
+        result |=
+            EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i as isize + 4).read_unaligned() };
+        result |=
+            EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i as isize + 8).read_unaligned() };
+        result |=
+            EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(i as isize + 12).read_unaligned() };
     }
     // Final chunk is just a single check
-    result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(4096 - 16).read() };
+    result |= EXP_PATTERN_SIGNATURE == unsafe { ptr.byte_offset(SIZE as isize - 16).read() };
     if result {
         // Do the slow parse to find the index here since we had a PERFECT match
         let mut offset = 0;
-        while offset <= 4096 - 16 {
+        while offset <= SIZE - 16 {
             let ptr: *const u128 =
                 unsafe { haystack.as_ptr().byte_offset(offset.try_into().unwrap()) }.cast();
             let val = unsafe { ptr.read_unaligned() };

@@ -2,6 +2,7 @@
 #![feature(portable_simd)]
 #![feature(array_into_iter_constructors)]
 #![feature(const_option)]
+#![feature(maybe_uninit_array_assume_init)]
 #![cfg(target_feature = "simd128")]
 #![no_std]
 
