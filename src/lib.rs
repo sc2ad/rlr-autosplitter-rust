@@ -78,13 +78,24 @@ async fn main() {
 
     log!("Loaded settings: {settings:?}");
 
-    let mut splits = [
-        SplitType::ExpGained,
-        SplitType::ExpGained,
-        SplitType::ExpGained,
+    asr::set_tick_rate(30.0);
+
+    // TODO: Back with a settings structure of some kind
+    let all_splits = [
         SplitType::Level1,
-    ]
-    .iter();
+        SplitType::Level2,
+        SplitType::Level3,
+        SplitType::Bot2000,
+        SplitType::Level4,
+        SplitType::Level5,
+        SplitType::Level6,
+        SplitType::Odin,
+        SplitType::Level7,
+        SplitType::Level8,
+        SplitType::Level9,
+        SplitType::Diablo,
+    ];
+    let mut split_iter = all_splits.iter();
 
     loop {
         let process = Process::wait_attach("SC2_x64.exe").await;
@@ -112,7 +123,9 @@ async fn main() {
                         log!("STARTING THE TIMER!");
                         timer::start();
                     }
-                    let mut split = splits.next();
+                    // When we reset, we reset counting the splits
+                    split_iter = all_splits.iter();
+                    let mut split = split_iter.next();
                     loop {
                         settings.update();
                         // General loop consists of performing an exp update
@@ -135,7 +148,7 @@ async fn main() {
                             if data.should_split(*spl) {
                                 log!("SPLITTING FOR: {spl:?}");
                                 timer::split();
-                                split = splits.next();
+                                split = split_iter.next();
                             }
                         }
 
