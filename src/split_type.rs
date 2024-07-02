@@ -1,23 +1,31 @@
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SplitType {
-    Manual = 0,
-    Level1 = 1,
-    Level2 = 2,
-    Level3 = 3,
-    Bot2000 = 4,
-    Level4 = 5,
-    Level5 = 6,
-    Level6 = 7,
-    Odin = 8,
-    Level7 = 9,
-    Level8 = 10,
-    Level9 = 11,
-    Diablo = 12,
-    CowLevel = 13,
-    ExpGained = 100,
+    Manual,
+    Level1,
+    Level2,
+    Level3,
+    Bot2000,
+    Level4,
+    Level5,
+    Level6,
+    Odin,
+    Level7,
+    Level8,
+    Level9,
+    Diablo,
+    CowLevel,
+    ExpGained,
     RawLevelComplete,
     LevelComplete,
     BossComplete,
+    Bot2000Cube,
+    OdinCube,
+    PadCrossed,
+    // Discriminated values here represent options for the split type
+    PadCrossedForLevel { raw_level: i32 },
+    CompleteForLevel { raw_level: i32 },
+    PadsCrossed { num: i32 },
+    EnergyCubes { num: i32 },
     // TODO: Add splits for energy feeding for b2k, odin (+ healing), diablo chaser hit 1 and 3
     // TODO: Once we move away from JUST exp, add splits for b2k rocks, odin flood phases, diablo p1/p2 on insane, etc.
 }
@@ -34,6 +42,51 @@ pub enum Difficulty {
 pub const LARGEST_EXP_DIFFERENCE: i32 = 300 * 3;
 
 impl SplitType {
+    /// Returns the raw numerical level
+    pub fn raw_level(&self) -> i32 {
+        match self {
+            Self::Level1 => 1,
+            Self::Level2 => 2,
+            Self::Level3 => 3,
+            Self::Bot2000 => 4,
+            Self::Level4 => 5,
+            Self::Level5 => 6,
+            Self::Level6 => 7,
+            Self::Odin => 8,
+            Self::Level7 => 9,
+            Self::Level8 => 10,
+            Self::Level9 => 11,
+            Self::Diablo => 12,
+            Self::CowLevel => 13,
+            _ => panic!("Cannot get the raw level of: {self:?}"),
+        }
+    }
+    pub fn from_raw_level(raw_level: i32) -> Self {
+        match raw_level {
+            1 => Self::Level1,
+            2 => Self::Level2,
+            3 => Self::Level3,
+            4 => Self::Bot2000,
+            5 => Self::Level4,
+            6 => Self::Level5,
+            7 => Self::Level6,
+            8 => Self::Odin,
+            9 => Self::Level7,
+            10 => Self::Level8,
+            11 => Self::Level9,
+            12 => Self::Diablo,
+            13 => Self::CowLevel,
+            _ => panic!("Cannot get the level for raw level of: {raw_level}"),
+        }
+    }
+    /// Returns the exp for a cube on a particular boss level
+    pub fn cube_exp(&self, difficulty: Difficulty) -> i32 {
+        match self {
+            Self::Bot2000 => 6 * difficulty as i32,
+            Self::Odin => 10 * difficulty as i32,
+            _ => panic!("Cannot call cube_exp on: {self:?} for difficulty: {difficulty:?}"),
+        }
+    }
     /// Returns true if we need the difficulty to be computed for the current split type
     pub fn need_difficulty(&self) -> bool {
         !matches!(self, SplitType::Manual | SplitType::ExpGained)
@@ -82,12 +135,19 @@ impl SplitType {
             | SplitType::Level5
             | SplitType::Level6
             | SplitType::Level7
-            | SplitType::Level8 => Some((1 + *self as i32) * difficulty as i32),
+            | SplitType::Level8 => Some((1 + self.raw_level()) * difficulty as i32),
             SplitType::Manual
             | SplitType::ExpGained
             | SplitType::BossComplete
             | SplitType::RawLevelComplete
-            | SplitType::LevelComplete => None,
+            | SplitType::LevelComplete
+            | SplitType::Bot2000Cube
+            | SplitType::OdinCube
+            | SplitType::PadCrossed => None,
+            SplitType::PadCrossedForLevel { .. }
+            | SplitType::CompleteForLevel { .. }
+            | SplitType::PadsCrossed { .. }
+            | SplitType::EnergyCubes { .. } => None,
         }
     }
     /// Returns the boss completion exp, panicking if the current level type is not a boss level

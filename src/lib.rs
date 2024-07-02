@@ -1,19 +1,20 @@
 #![feature(type_alias_impl_trait, const_async_blocks)]
 #![feature(portable_simd)]
 #![feature(array_into_iter_constructors)]
-#![feature(const_option)]
 #![feature(maybe_uninit_array_assume_init)]
 #![cfg(target_feature = "simd128")]
 #![no_std]
 
 mod data;
 mod sigscan;
+mod split_state;
 mod split_type;
 
 use asr::time::Duration;
 use asr::Process;
 use asr::{future::next_tick, settings::Gui, timer};
 use data::GameData;
+use split_state::SplitState;
 use split_type::SplitType;
 
 asr::async_main!(nightly);
@@ -69,7 +70,7 @@ struct Settings {
     #[default = false]
     set_game_time: bool,
     /// Automatically start the timer
-    #[default = true]
+    #[default = false]
     auto_start: bool,
 }
 
@@ -77,8 +78,6 @@ async fn main() {
     let mut settings = Settings::register();
 
     log!("Loaded settings: {settings:?}");
-
-    asr::set_tick_rate(30.0);
 
     // TODO: Back with a settings structure of some kind
     let all_splits = [
@@ -111,8 +110,6 @@ async fn main() {
                     }
                     // Try to make a gamedata instance
                     let mut data = GameData::new(&process).await;
-                    let current_exp = data.exp();
-                    log!("Initially loaded exp: {current_exp:?}");
                     settings.update();
                     // Now that we have a game data instance, first immediately try to start the timer as needed
                     if settings.set_game_time {
@@ -126,10 +123,14 @@ async fn main() {
                     // When we reset, we reset counting the splits
                     split_iter = all_splits.iter();
                     let mut split = split_iter.next();
+                    // Form the split state with the options from this current split, if present.
+                    let mut split_state = SplitState::from_split(split);
+                    // TODO: Depending on if our run type has a set difficulty or not, force a certain difficulty instead of deducing it
+                    // Here and also within the split_iter.next() call
                     loop {
                         settings.update();
                         // General loop consists of performing an exp update
-                        data.update();
+                        let state = data.update();
                         // Check to see if we invalidated in some way, if so, reset as needed and break to our outer loop
                         if data.invalid() {
                             if settings.auto_reset {
@@ -145,10 +146,12 @@ async fn main() {
                         // Then check our upcoming split to see if we should split
                         // TODO: Keep the split info in a settings file somehow
                         if let Some(spl) = split {
-                            if data.should_split(*spl) {
+                            if state.should_split(&mut split_state, *spl) {
                                 log!("SPLITTING FOR: {spl:?}");
                                 timer::split();
                                 split = split_iter.next();
+                                // Form the next state with the next split options
+                                split_state = SplitState::from_split(split);
                             }
                         }
 
