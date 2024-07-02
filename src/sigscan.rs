@@ -40,7 +40,7 @@ extern "C" {
 // static EXP_PATTERN_SECOND_SCALAR: u64 = 0x0110CA;
 // static EXP_PATTERN_SECOND: u64x64 = simd::Simd::from_array([EXP_PATTERN_SECOND_SCALAR; 64]);
 const EXP_PATTERN_SIGNATURE: u128 = 0x00000000000110CA00011BDF0000004A;
-const YIELD_FREQ: i32 = 700;
+const YIELD_FREQ: i32 = 100;
 // static EXP_PATTERN_BYTES: [u64; 64] = seq_macro::seq!(N in 0..32 {
 //     [
 //         #(

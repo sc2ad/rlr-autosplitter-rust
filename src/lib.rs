@@ -78,6 +78,7 @@ async fn main() {
     let mut settings = Settings::register();
 
     log!("Loaded settings: {settings:?}");
+    asr::set_tick_rate(30.0);
 
     // TODO: Back with a settings structure of some kind
     let all_splits = [
@@ -110,6 +111,8 @@ async fn main() {
                     }
                     // Try to make a gamedata instance
                     let mut data = GameData::new(&process).await;
+                    // Set tick rate back to something fast enough to catch cases
+                    asr::set_tick_rate(120.0);
                     settings.update();
                     // Now that we have a game data instance, first immediately try to start the timer as needed
                     if settings.set_game_time {
